@@ -2568,11 +2568,12 @@ int chg_switch_profile(struct pd_pps_data *pps, struct power_supply *tcpm_psy,
 
 static void chg_update_csi(struct chg_drv *chg_drv)
 {
+	const bool is_disconnected = chg_state_is_disconnected(&chg_drv->chg_state);
+	const bool is_limit_paused = !is_disconnected && chg_drv->disable_charging > 0;
 	const bool is_policy = chg_drv->charging_policy == CHARGING_POLICY_VOTE_LONGLIFE;
-	const bool is_dwell = !is_policy &&
+	const bool is_dwell = !is_policy && is_limit_paused &&
 			     chg_is_custom_enabled(chg_drv->charge_stop_level,
 						   chg_drv->charge_start_level);
-	const bool is_disconnected = chg_state_is_disconnected(&chg_drv->chg_state);
 	const bool is_full = (chg_drv->chg_state.f.flags & GBMS_CS_FLAG_DONE) != 0;
 	const bool is_dock = chg_drv->bd_state.dd_state == DOCK_DEFEND_ACTIVE;
 	const bool is_temp = chg_drv->bd_state.triggered;
@@ -2606,10 +2607,14 @@ static void chg_update_csi(struct chg_drv *chg_drv)
 				CSI_STATUS_Defender_Dwell,
 				is_dwell);
 
-	/* Longlife is set on TEMP, DWELL and TRICKLE */
+	/*
+	 * A configured SoC limit is not a charging pause. Report LongLife for
+	 * user limits only while the controller is holding charging, including
+	 * the recharge hysteresis window. Keep temperature/dock protection votes.
+	 */
 	gvotable_cast_long_vote(chg_drv->csi_type_votable, "CSI_TYPE_DEFEND",
 				CSI_TYPE_LongLife,
-				is_temp || is_dwell || is_dock || is_policy);
+				is_temp || is_dwell || is_dock || (is_policy && is_limit_paused));
 
 	/* Set to normal if the device docked */
 	if (is_dock)
